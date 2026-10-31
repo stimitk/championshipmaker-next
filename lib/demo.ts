@@ -23,6 +23,32 @@ let questions: Row[] = [
     expected_time_sec: 20,
     total_coins: 10,
   },
+  {
+    question_id: 2,
+    label_id: 1,
+    label_name: "Science Basics",
+    question_text: "Which of these are noble gases?",
+    option1_text: "Helium",
+    option2_text: "Oxygen",
+    option3_text: "Neon",
+    option4_text: "Nitrogen",
+    correct_answer: "1,3",
+    expected_time_sec: 25,
+    total_coins: 10,
+  },
+  {
+    question_id: 3,
+    label_id: 2,
+    label_name: "World Knowledge",
+    question_text: "Which is the largest ocean on Earth?",
+    option1_text: "Atlantic",
+    option2_text: "Indian",
+    option3_text: "Pacific",
+    option4_text: "Arctic",
+    correct_answer: "3",
+    expected_time_sec: 20,
+    total_coins: 10,
+  },
 ];
 let championships: Row[] = [
   {
@@ -239,6 +265,15 @@ export function demoRequest(
       method === "GET"
         ? labels
         : { labelId: labels[labels.length - 1].label_id };
+  } else if (/^\/questions\/labels\/[^/]+$/.test(route) && method === "PUT") {
+    const row = labels.find(
+      (l) => String(l.label_id) === route.split("/").pop(),
+    );
+    if (!row) throw new Error("Demo question set not found.");
+    if (!Array.isArray(input.excludedQuestionIds))
+      throw new Error("excludedQuestionIds must be a list of question IDs.");
+    row.excluded_question_ids = input.excludedQuestionIds;
+    data = { updated: true };
   } else if (route === "/questions/analytics/frequent-errors")
     data = [
       {
@@ -283,6 +318,11 @@ export function demoRequest(
       row,
       Object.fromEntries(Object.entries(input).map(([k, v]) => [snake(k), v])),
     );
+    // labelId: null removes the question from its set but keeps it in the bank.
+    if ("labelId" in input)
+      row.label_name =
+        labels.find((l) => String(l.label_id) === String(input.labelId))
+          ?.label_name ?? null;
     data = { updated: true };
   } else if (
     route === "/championships/feed" ||

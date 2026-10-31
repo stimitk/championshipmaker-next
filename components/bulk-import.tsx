@@ -238,7 +238,7 @@ export function BulkImport({
               columns={[
                 ["questionText", "Question"],
                 ["labelId", "Question set"],
-                ["correctAnswer", "Correct option"],
+                ["correctAnswer", "Correct answers"],
                 ["import_status", "Import status"],
                 ["import_error", "Message"],
               ]}

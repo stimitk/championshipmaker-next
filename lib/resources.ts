@@ -12,7 +12,7 @@ export const resources: Record<string, Resource> = {
       ["label_name", "Question set"],
       ["status", "Status"],
     ],
-    createTitle: "New Question Set",
+    createTitle: "Add new question set",
     createPath: "/labels/new",
     fields: [
       {
@@ -178,7 +178,7 @@ export const questionFields: Field[] = [
     },
   ]),
   {
-    ...required("correctAnswer", "Correct option", "select"),
+    ...required("correctAnswer", "Correct options", "select"),
     options: [1, 2, 3, 4].map((n) => ({
       value: String(n),
       label: `Option ${n}`,

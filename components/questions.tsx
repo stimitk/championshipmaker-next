@@ -4,6 +4,10 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api, errorText, rowsOf } from "../lib/api";
 import { questionFields } from "../lib/resources";
+import {
+  excludedQuestionIds,
+  saveExcludedQuestions,
+} from "../lib/question-selection";
 import type { Row } from "../lib/types";
 import {
   DataTable,
@@ -15,6 +19,7 @@ import {
   useLoad,
   Card,
   Button,
+  ConfirmModal,
 } from "./ui";
 
 export function QuestionBank() {
@@ -22,6 +27,13 @@ export function QuestionBank() {
   const [search, setSearch] = useState("");
   const [label, setLabel] = useState("");
   const [revision, setRevision] = useState(0);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [confirming, setConfirming] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const [removeError, setRemoveError] = useState("");
+  const [removeMessage, setRemoveMessage] = useState("");
+  // Selection belongs to the rows on screen; a new page or filter starts fresh.
+  useEffect(() => setSelected([]), [page, search, label]);
   const query = new URLSearchParams({
     page: String(page),
     limit: "20",
@@ -32,7 +44,65 @@ export function QuestionBank() {
     `/questions/?${query}`,
     revision,
   );
-  const labels = useLoad<unknown>("/questions/labels");
+  const labels = useLoad<unknown>("/questions/labels", revision);
+  const setNames = new Map(
+    rowsOf(labels.data).map((row) => [String(row.label_id), row.label_name]),
+  );
+  const labelName = String(setNames.get(label) || "this question set");
+  const rows: Row[] = (data?.questions || []).map((row) => ({
+    ...row,
+    label_name:
+      row.label_id === null || row.label_id === undefined || row.label_id === ""
+        ? null
+        : (row.label_name ?? setNames.get(String(row.label_id)) ?? row.label_id),
+  }));
+  const shownIds = new Set(
+    rows.map((row) => String(row.question_id)),
+  );
+  const removable = selected.filter((id) => shownIds.has(id));
+
+  async function removeFromSet() {
+    if (!label || !removable.length || removing) return;
+    setRemoving(true);
+    setRemoveError("");
+    setRemoveMessage("");
+    const failed: string[] = [];
+    let lastError: unknown;
+    // Clear only the set link; the question itself stays in the bank.
+    for (const id of removable) {
+      try {
+        await api(`/questions/${encodeURIComponent(id)}`, {
+          method: "PUT",
+          body: { labelId: null },
+        });
+      } catch (e) {
+        failed.push(id);
+        lastError = e;
+      }
+    }
+    const removed = removable.length - failed.length;
+    // Drop removed questions from the set's live-quiz exclusions so its counts stay accurate.
+    const excluded = excludedQuestionIds(
+      rowsOf(labels.data).find((row) => String(row.label_id) === label),
+    );
+    const pruned = excluded.filter(
+      (id) => !removable.includes(id) || failed.includes(id),
+    );
+    if (pruned.length !== excluded.length)
+      await saveExcludedQuestions(label, pruned).catch(() => {});
+    setRemoving(false);
+    setConfirming(false);
+    if (removed)
+      setRemoveMessage(
+        `${removed} ${removed === 1 ? "question" : "questions"} removed from ${labelName}. ${removed === 1 ? "It is" : "They are"} still in the Question Bank.`,
+      );
+    if (failed.length)
+      setRemoveError(
+        `${failed.length} ${failed.length === 1 ? "question" : "questions"} could not be removed: ${errorText(lastError)}`,
+      );
+    setRevision((v) => v + 1);
+    if (failed.length) setSelected(failed);
+  }
 
   function filter(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -40,6 +110,8 @@ export function QuestionBank() {
     setSearch(String(form.get("search") || ""));
     setLabel(String(form.get("label") || ""));
     setPage(1);
+    setRemoveMessage("");
+    setRemoveError("");
   }
 
   return (
@@ -60,7 +132,11 @@ export function QuestionBank() {
           </label>
           <label>
             Question set
-            <select name="label" defaultValue="">
+            <select
+              name="label"
+              defaultValue={label}
+              key={labels.loading ? "loading" : "ready"}
+            >
               <option value="">All question sets</option>
               {rowsOf(labels.data).map((row) => (
                 <option key={String(row.label_id)} value={String(row.label_id)}>
@@ -72,15 +148,56 @@ export function QuestionBank() {
           <Button type="submit">Filter</Button>
         </form>
         {labels.error && <Notice kind="error">{labels.error}</Notice>}
+        {removeMessage && <Notice kind="success">{removeMessage}</Notice>}
+        {removeError && <Notice kind="error">{removeError}</Notice>}
+        {label ? (
+          <div className="selection-bar" role="group" aria-label="Selected questions">
+            <span role="status">
+              {removable.length
+                ? `${removable.length} selected`
+                : `Select questions to remove them from ${labelName}.`}
+            </span>
+            {removable.length > 0 && (
+              <Button size="sm" variant="secondary" onClick={() => setSelected([])}>
+                Clear selection
+              </Button>
+            )}
+            <Button
+              size="sm"
+              variant="danger"
+              disabled={!removable.length || removing}
+              onClick={() => setConfirming(true)}
+            >
+              Remove from set
+            </Button>
+          </div>
+        ) : (
+          <p className="muted">
+            Filter by a question set to select questions and remove them from
+            that set.
+          </p>
+        )}
         {error ? (
           <Retry error={error} onRetry={() => setRevision((v) => v + 1)} />
         ) : (
           <>
             <DataTable
-              rows={data?.questions || []}
+              rows={rows}
               loading={loading}
+              selection={
+                label
+                  ? {
+                      selected,
+                      onChange: setSelected,
+                      rowId: (row) => String(row.question_id),
+                      rowLabel: (row) =>
+                        `question ${String(row.question_id)}`,
+                    }
+                  : undefined
+              }
               columns={[
                 ["question_text", "Question"],
+                ["label_name", "Question set"],
                 ["option1_text", "Option 1"],
                 ["option2_text", "Option 2"],
                 ["option3_text", "Option 3"],
@@ -144,6 +261,25 @@ export function QuestionBank() {
           </>
         )}
       </Card>
+      <ConfirmModal
+        isOpen={confirming}
+        onClose={() => {
+          if (!removing) setConfirming(false);
+        }}
+        onConfirm={removeFromSet}
+        loading={removing}
+        isDangerous
+        title="Remove from question set?"
+        confirmLabel={`Remove ${removable.length} ${removable.length === 1 ? "question" : "questions"}`}
+        message={
+          <p>
+            {removable.length === 1 ? "This question" : `These ${removable.length} questions`}{" "}
+            will no longer be part of <strong>{labelName}</strong> or
+            championships that use it. {removable.length === 1 ? "It stays" : "They stay"} in
+            the Question Bank and can be added to a set again by editing.
+          </p>
+        }
+      />
     </>
   );
 }

@@ -7,6 +7,8 @@ import {
   questionFields,
   resources,
 } from "../lib/resources";
+import { matchesSearch } from "../lib/search";
+import { excludedQuestionIds } from "../lib/question-selection";
 import type { Row } from "../lib/types";
 import { Form, Heading, Loading, Notice, Retry, useLoad } from "./ui";
 
@@ -24,6 +26,7 @@ export function ChampionshipWizard() {
     endTime: "18:00",
   });
   const [selected, setSelected] = useState<string[]>([]);
+  const [setSearch, setSetSearch] = useState("");
   const [revision, setRevision] = useState(0);
   const [editor, setEditor] = useState<"question" | "set" | "import" | null>(
     null,
@@ -61,7 +64,14 @@ export function ChampionshipWizard() {
           `/questions/?${new URLSearchParams({ labelId: id, limit: "1", page: "1" })}`,
           { signal: controller.signal },
         );
-        return [id, Number(result.total)] as const;
+        // Questions switched off in the set are not drawn for live games.
+        const set = rowsOf(labels.data).find(
+          (row) => String(row.label_id) === id,
+        );
+        return [
+          id,
+          Math.max(0, Number(result.total) - excludedQuestionIds(set).length),
+        ] as const;
       }),
     )
       .then((values) => {
@@ -74,8 +84,14 @@ export function ChampionshipWizard() {
         if (!controller.signal.aborted) setCountsLoading(false);
       });
     return () => controller.abort();
-  }, [selectedKey, revision]);
+  }, [selectedKey, revision, labels.data]);
   const sets = rowsOf(labels.data);
+  const visibleSets = sets.filter((row) =>
+    matchesSearch(row.label_name, setSearch),
+  );
+  const hiddenSelected = selected.filter(
+    (id) => !visibleSets.some((row) => String(row.label_id) === id),
+  ).length;
   const total = selected.reduce((sum, id) => sum + (counts[id] || 0), 0);
   const ready =
     selected.length > 0 &&
@@ -246,7 +262,7 @@ export function ChampionshipWizard() {
               >
                 {editor === "set"
                   ? "Close question set form"
-                  : "New question set"}
+                  : "Add new question set"}
               </button>
               <button
                 type="button"
@@ -280,7 +296,7 @@ export function ChampionshipWizard() {
               <div className="wizard-inline-editor">
                 {editor !== "import" && (
                   <h3>
-                    {editor === "set" ? "New question set" : "Add a question"}
+                    {editor === "set" ? "Add new question set" : "Add a question"}
                   </h3>
                 )}
                 {editor === "import" ? (
@@ -376,7 +392,37 @@ export function ChampionshipWizard() {
             ) : sets.length ? (
               <fieldset className="wizard-question-sets">
                 <legend>Question sets</legend>
-                {sets.map((row) => {
+                <div className="table-toolbar wizard-set-search">
+                  <label>
+                    Search your question sets
+                    <input
+                      type="search"
+                      value={setSearch}
+                      onChange={(event) => setSetSearch(event.target.value)}
+                      placeholder="Name or keyword"
+                    />
+                  </label>
+                  <span role="status">
+                    {setSearch
+                      ? `${visibleSets.length} of ${sets.length} sets`
+                      : `${sets.length} ${sets.length === 1 ? "set" : "sets"}`}
+                    {selected.length > 0 && ` · ${selected.length} selected`}
+                    {hiddenSelected > 0 && ` (${hiddenSelected} hidden by search)`}
+                  </span>
+                </div>
+                {!visibleSets.length && (
+                  <p className="muted">
+                    No question sets match “{setSearch}”.{" "}
+                    <button
+                      type="button"
+                      className="text-button"
+                      onClick={() => setSetSearch("")}
+                    >
+                      Clear search
+                    </button>
+                  </p>
+                )}
+                {visibleSets.map((row) => {
                   const id = String(row.label_id);
                   return (
                     <label className="wizard-set-option" key={id}>
@@ -396,7 +442,7 @@ export function ChampionshipWizard() {
                         <small>
                           {countsLoading
                             ? "Counting…"
-                            : `${counts[id] || 0} questions`}
+                            : `${counts[id] || 0} live questions${excludedQuestionIds(row).length ? ` · ${excludedQuestionIds(row).length} switched off` : ""}`}
                         </small>
                       )}
                     </label>

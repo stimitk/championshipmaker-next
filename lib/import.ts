@@ -2,7 +2,17 @@ import { plainRichText, sanitizeRichText } from "./rich-text";
 import { asId } from "./api";
 import type { Row } from "./types";
 export const csvTemplate =
-  'labelId,questionText,option1Text,option2Text,option3Text,option4Text,correctAnswer,expectedTimeSeconds,totalCoins\n,"Which gas is released during photosynthesis?",Oxygen,Carbon Dioxide,Nitrogen,Hydrogen,1,20,10\n';
+  'labelId,questionText,option1Text,option2Text,option3Text,option4Text,correctAnswer,expectedTimeSeconds,totalCoins\n,"Which gas is released during photosynthesis?",Oxygen,Carbon Dioxide,Nitrogen,Hydrogen,1,20,10\n,"Which of these are noble gases?",Helium,Oxygen,Neon,Nitrogen,"1,3",20,10\n';
+// Correct answers are stored as comma-separated option numbers ("1" or "1,3"), the format the player app scores.
+export function parseCorrectAnswers(value: unknown): string[] | null {
+  const parts = String(value ?? "")
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (!parts.length || parts.some((part) => !["1", "2", "3", "4"].includes(part)))
+    return null;
+  return [...new Set(parts)].sort();
+}
 // CSV parser supports quoted commas, escaped quotes, CRLF and multiline fields.
 export function parseCsv(text: string): Row[] {
   const rows: string[][] = [];
@@ -81,10 +91,12 @@ export function validateQuestions(rows: Row[], fallbackLabel: string): Row[] {
         result[key] = sanitizeRichText(value);
       } else result[key] = value;
     }
-    if (!["1", "2", "3", "4"].includes(String(result.correctAnswer)))
+    const correct = parseCorrectAnswers(result.correctAnswer);
+    if (!correct)
       throw new Error(
-        `Question ${i + 1}: correctAnswer must be 1, 2, 3, or 4.`,
+        `Question ${i + 1}: correctAnswer must be 1, 2, 3, or 4, or several separated by commas (for example "1,3").`,
       );
+    result.correctAnswer = correct.join(",");
     const label = String(raw.labelId || fallbackLabel).trim();
     if (!label)
       throw new Error(

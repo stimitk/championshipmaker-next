@@ -52,3 +52,19 @@ Question forms now use a dedicated composer: formatted question text, four answe
 Real sessions upload through `POST /questions/images` on the configured backend. The returned public URL is saved with the question; binary files are not included in the question JSON. Demo sessions keep their attachments in memory and never upload them to the live API.
 
 The backend stores files in `UPLOAD_DIR/questions` (default `./uploads/questions`). Set `PUBLIC_API_URL` to the public API origin in production. See [API_DOCUMENTATION.md](../docs/API_DOCUMENTATION.md) for upload requests and server storage configuration.
+
+## Multiple correct answers and removing questions from a set
+
+Each answer choice has a checkbox, so a question can have one or more correct answers. They are sent in the existing `correctAnswer` string as sorted, comma-separated option numbers (`"1"` or `"1,3"`). The player app already scores this format. Imports accept the same format; quote it in CSV (`"1,3"`). The backend must accept comma-separated values in `correctAnswer`.
+
+In the Question Bank, filter by a question set to show a checkbox on each row. Selected questions are removed from that set with `PUT /questions/:id` and `{ "labelId": null }`. The question stays in the bank and can be assigned to a set again by editing it. The backend must allow a `null` `labelId` on update and keep listing unassigned questions in `GET /questions`.
+
+## Live quiz question selection
+
+On the Question Sets page, each question in the Questions tab has a checkbox. Checked questions are included when a championship using the set goes live; unchecked ones are left out but stay in the set and the Question Bank, unmodified. New questions are included by default. Changes are a draft until **Save selection**; switching sets with unsaved changes asks first. The championship wizard counts only included questions when checking that enough are available.
+
+The set stores the questions that are switched off. Backend requirements:
+
+- `PUT /questions/labels/:id` with `{ "excludedQuestionIds": [12, 15] }` replaces the set's list (an empty list includes everything). Only the set's owner or a superadmin may change it.
+- `GET /questions/labels` returns `excluded_question_ids` (array) on each set.
+- `POST /quiz/session/start` must not draw excluded questions. Ignore IDs that no longer belong to the set.

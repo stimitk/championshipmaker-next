@@ -1,7 +1,12 @@
 "use client";
 import { useEffect, useState } from "react";
-import { api, rowsOf } from "../lib/api";
-import { questionFields, resources } from "../lib/resources";
+import { api, errorText, rowsOf } from "../lib/api";
+import {
+  excludedQuestionIds,
+  saveExcludedQuestions,
+} from "../lib/question-selection";
+import { questionFields } from "../lib/resources";
+import { matchesSearch } from "../lib/search";
 import type { Row } from "../lib/types";
 import dynamic from "next/dynamic";
 import {
@@ -44,12 +49,56 @@ export function QuestionSets({
   const [importing, setImporting] = useState(false);
   const [questionMessage, setQuestionMessage] = useState("");
   const [page, setPage] = useState(1);
+  const [setSearch, setSetSearch] = useState("");
+  // Unsaved live-quiz selection for the open set; null means it matches what is saved.
+  const [draftExcluded, setDraftExcluded] = useState<string[] | null>(null);
+  const [savingSelection, setSavingSelection] = useState(false);
+  const [selectionError, setSelectionError] = useState("");
+  const [selectionMessage, setSelectionMessage] = useState("");
   const labels = useLoad<unknown>("/questions/labels", labelsRevision);
   const sets = rowsOf(labels.data);
   useEffect(() => {
     if (!selected && sets.length) setSelected(String(sets[0].label_id));
   }, [labels.data, selected]);
   const current = sets.find((row) => String(row.label_id) === selected);
+  const visibleSets = sets.filter((row) =>
+    matchesSearch(row.label_name, setSearch),
+  );
+  const savedExcluded = excludedQuestionIds(current);
+  const excluded = draftExcluded ?? savedExcluded;
+  const selectionDirty = draftExcluded !== null;
+  function chooseSet(id: string) {
+    if (
+      selectionDirty &&
+      !confirm("Discard your unsaved live quiz selection for this set?")
+    )
+      return;
+    setDraftExcluded(null);
+    setSelectionError("");
+    setSelectionMessage("");
+    setSelected(id);
+    setPage(1);
+  }
+  async function saveSelection() {
+    if (!draftExcluded || savingSelection) return;
+    setSavingSelection(true);
+    setSelectionError("");
+    setSelectionMessage("");
+    try {
+      await saveExcludedQuestions(selected, draftExcluded);
+      setSelectionMessage(
+        draftExcluded.length
+          ? `Saved. ${draftExcluded.length} ${draftExcluded.length === 1 ? "question is" : "questions are"} left out of live quizzes.`
+          : "Saved. Every question in this set is included in live quizzes.",
+      );
+      setDraftExcluded(null);
+      setLabelsRevision((v) => v + 1);
+    } catch (error) {
+      setSelectionError(errorText(error));
+    } finally {
+      setSavingSelection(false);
+    }
+  }
   const questions = useLoad<{ questions: Row[]; total: number }>(
     selected
       ? `/questions/?${new URLSearchParams({ labelId: selected, page: String(page), limit: "20" })}`
@@ -66,6 +115,7 @@ export function QuestionSets({
           refresh();
         }}
         onComplete={(id) => {
+          setDraftExcluded(null);
           setSelected(id);
           setPage(1);
           setTab("questions");
@@ -83,7 +133,7 @@ export function QuestionSets({
         description="Create a set, then add questions individually or import them from a file."
         action={
           <button disabled={importing} onClick={() => setCreating(!creating)}>
-            {creating ? "Close new set" : "New question set"}
+            {creating ? "Close new set" : "Add new question set"}
           </button>
         }
       />
@@ -98,27 +148,58 @@ export function QuestionSets({
               onRetry={() => setLabelsRevision((v) => v + 1)}
             />
           ) : sets.length ? (
-            <ul>
-              {sets.map((row) => (
-                <li key={String(row.label_id)}>
+            <>
+              <label className="set-search">
+                Search question sets
+                <input
+                  type="search"
+                  value={setSearch}
+                  onChange={(event) => setSetSearch(event.target.value)}
+                  placeholder="Name or keyword"
+                />
+              </label>
+              <p className="muted set-search-count" role="status">
+                {setSearch
+                  ? `${visibleSets.length} of ${sets.length} sets`
+                  : `${sets.length} ${sets.length === 1 ? "set" : "sets"}`}
+              </p>
+              {visibleSets.length ? (
+                <fieldset className="set-picker-group" disabled={importing}>
+                  <legend className="sr-only">Choose a question set</legend>
+                  {visibleSets.map((row) => {
+                    const id = String(row.label_id);
+                    return (
+                      <label
+                        key={id}
+                        className={
+                          selected === id ? "set-picker selected" : "set-picker"
+                        }
+                      >
+                        <input
+                          type="radio"
+                          name="question-set"
+                          value={id}
+                          checked={selected === id}
+                          onChange={() => chooseSet(id)}
+                        />
+                        <span>{String(row.label_name)}</span>
+                      </label>
+                    );
+                  })}
+                </fieldset>
+              ) : (
+                <p className="muted">
+                  No question sets match “{setSearch}”.{" "}
                   <button
-                    className={
-                      selected === String(row.label_id)
-                        ? "set-picker selected"
-                        : "set-picker"
-                    }
-                    disabled={importing}
-                    aria-pressed={selected === String(row.label_id)}
-                    onClick={() => {
-                      setSelected(String(row.label_id));
-                      setPage(1);
-                    }}
+                    type="button"
+                    className="text-button"
+                    onClick={() => setSetSearch("")}
                   >
-                    {String(row.label_name)}
+                    Clear search
                   </button>
-                </li>
-              ))}
-            </ul>
+                </p>
+              )}
+            </>
           ) : (
             <p className="muted">Create a question set to get started.</p>
           )}
@@ -161,8 +242,74 @@ export function QuestionSets({
                   <Retry error={questions.error} onRetry={refresh} />
                 ) : (
                   <>
+                    <div className="selection-bar" role="group" aria-label="Live quiz selection">
+                      <span role="status">
+                        {(() => {
+                          const total = Number(questions.data?.total || 0);
+                          const included = Math.max(0, total - excluded.length);
+                          return `${included} of ${total} questions included in live quizzes${selectionDirty ? " · unsaved changes" : ""}`;
+                        })()}
+                      </span>
+                      {selectionDirty && (
+                        <button
+                          type="button"
+                          className="small secondary"
+                          disabled={savingSelection}
+                          onClick={() => {
+                            setDraftExcluded(null);
+                            setSelectionError("");
+                          }}
+                        >
+                          Discard changes
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="small"
+                        disabled={!selectionDirty || savingSelection}
+                        onClick={saveSelection}
+                      >
+                        {savingSelection ? "Saving…" : "Save selection"}
+                      </button>
+                    </div>
+                    <p className="muted live-selection-hint">
+                      Unchecked questions stay in this set and the Question
+                      Bank, but are left out when a championship using this
+                      set goes live.
+                    </p>
+                    {selectionError && (
+                      <Notice kind="error">{selectionError}</Notice>
+                    )}
+                    {selectionMessage && (
+                      <Notice kind="success">{selectionMessage}</Notice>
+                    )}
+                    <div className="live-selection">
                     <DataTable
                       rows={questions.data?.questions || []}
+                      selection={{
+                        selected: (questions.data?.questions || [])
+                          .map((row) => String(row.question_id))
+                          .filter((id) => !excluded.includes(id)),
+                        // The table only toggles rows on this page, so other pages keep their state.
+                        onChange: (included) => {
+                          const shown = (questions.data?.questions || []).map(
+                            (row) => String(row.question_id),
+                          );
+                          const next = [
+                            ...excluded.filter((id) => !shown.includes(id)),
+                            ...shown.filter((id) => !included.includes(id)),
+                          ].sort();
+                          setSelectionMessage("");
+                          setDraftExcluded(
+                            next.join() === [...savedExcluded].sort().join()
+                              ? null
+                              : next,
+                          );
+                        },
+                        rowId: (row) => String(row.question_id),
+                        rowLabel: (row) =>
+                          `question ${String(row.question_id)} for live quizzes`,
+                      }}
                       columns={[
                         ["question_text", "Question"],
                         ["option1_text", "Option 1"],
@@ -172,6 +319,7 @@ export function QuestionSets({
                         ["total_coins", "Coins"],
                       ]}
                     />
+                    </div>
                     <div className="pagination">
                       <button
                         className="secondary"

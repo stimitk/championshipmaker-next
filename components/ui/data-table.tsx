@@ -1,5 +1,5 @@
 "use client";
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { isRichColumn, plainRichText } from "../../lib/rich-text";
 import type { Row } from "../../lib/types";
 import { RichText } from "../rich-text-editor";
@@ -16,6 +16,37 @@ export interface DataTableProps {
   loading?: boolean;
   emptyMessage?: string;
   searchPlaceholder?: string;
+  selection?: {
+    selected: string[];
+    onChange: (ids: string[]) => void;
+    rowId: (row: Row) => string;
+    rowLabel?: (row: Row) => string;
+  };
+}
+
+function SelectAll({
+  checked,
+  indeterminate,
+  onChange,
+}: {
+  checked: boolean;
+  indeterminate: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = indeterminate;
+  }, [indeterminate]);
+  return (
+    <input
+      ref={ref}
+      type="checkbox"
+      className="row-select"
+      aria-label="Select all shown rows"
+      checked={checked}
+      onChange={(event) => onChange(event.target.checked)}
+    />
+  );
 }
 
 export function DataTable({
@@ -26,11 +57,17 @@ export function DataTable({
   loading = false,
   emptyMessage,
   searchPlaceholder = "Search…",
+  selection,
 }: DataTableProps) {
   const [search, setSearch] = useState("");
 
   if (loading) {
-    return <SkeletonTable rows={5} columns={columns.length + (actions ? 1 : 0)} />;
+    return (
+      <SkeletonTable
+        rows={5}
+        columns={columns.length + (actions ? 1 : 0) + (selection ? 1 : 0)}
+      />
+    );
   }
 
   const filtered = rows.filter((row) =>
@@ -40,6 +77,10 @@ export function DataTable({
         .includes(search.toLowerCase()),
     ),
   );
+  const shownIds = selection ? filtered.map(selection.rowId) : [];
+  const shownSelected = selection
+    ? shownIds.filter((id) => selection.selected.includes(id)).length
+    : 0;
 
   return (
     <>
@@ -61,6 +102,21 @@ export function DataTable({
         <table>
           <thead>
             <tr>
+              {selection && (
+                <th scope="col" className="select-cell">
+                  <SelectAll
+                    checked={shownIds.length > 0 && shownSelected === shownIds.length}
+                    indeterminate={shownSelected > 0 && shownSelected < shownIds.length}
+                    onChange={(checked) =>
+                      selection.onChange(
+                        checked
+                          ? [...new Set([...selection.selected, ...shownIds])]
+                          : selection.selected.filter((id) => !shownIds.includes(id)),
+                      )
+                    }
+                  />
+                </th>
+              )}
               {columns.map(([key, label]) => (
                 <th key={key} scope="col">
                   {label}
@@ -82,7 +138,30 @@ export function DataTable({
                       row.id ||
                       i,
                   )}
+                  className={
+                    selection?.selected.includes(selection.rowId(row))
+                      ? "is-selected"
+                      : undefined
+                  }
                 >
+                  {selection && (
+                    <td className="select-cell">
+                      <input
+                        type="checkbox"
+                        className="row-select"
+                        aria-label={`Select ${selection.rowLabel?.(row) || "row"}`}
+                        checked={selection.selected.includes(selection.rowId(row))}
+                        onChange={(event) => {
+                          const id = selection.rowId(row);
+                          selection.onChange(
+                            event.target.checked
+                              ? [...selection.selected, id]
+                              : selection.selected.filter((value) => value !== id),
+                          );
+                        }}
+                      />
+                    </td>
+                  )}
                   {columns.map(([key]) => (
                     <td key={key}>
                       {key === "status" ? (
@@ -127,7 +206,7 @@ export function DataTable({
             ) : (
               <tr>
                 <td
-                  colSpan={columns.length + (actions ? 1 : 0)}
+                  colSpan={columns.length + (actions ? 1 : 0) + (selection ? 1 : 0)}
                   className="empty"
                 >
                   {search ? (

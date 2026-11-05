@@ -12,10 +12,18 @@ export interface DataTableProps {
   rows: Row[];
   columns: [string, string][];
   actions?: (row: Row) => ReactNode;
+  /** Show the Actions column before the data columns instead of last. */
+  actionsFirst?: boolean;
+  /** Show a leading "Sr. No." column numbering the rows as displayed. */
+  serial?: boolean;
+  /** Number of the first row, e.g. to continue numbering across pages. */
+  serialStart?: number;
   statusKind?: "teacher" | "default";
   loading?: boolean;
   emptyMessage?: string;
   searchPlaceholder?: string;
+  /** Show the built-in search box; turn off when the page has its own search. */
+  searchable?: boolean;
   selection?: {
     selected: string[];
     onChange: (ids: string[]) => void;
@@ -53,19 +61,25 @@ export function DataTable({
   rows,
   columns,
   actions,
+  actionsFirst = false,
+  serial = false,
+  serialStart = 1,
   statusKind,
   loading = false,
   emptyMessage,
   searchPlaceholder = "Search…",
+  searchable = true,
   selection,
 }: DataTableProps) {
   const [search, setSearch] = useState("");
+
+  const extraColumns = (actions ? 1 : 0) + (selection ? 1 : 0) + (serial ? 1 : 0);
 
   if (loading) {
     return (
       <SkeletonTable
         rows={5}
-        columns={columns.length + (actions ? 1 : 0) + (selection ? 1 : 0)}
+        columns={columns.length + extraColumns}
       />
     );
   }
@@ -84,6 +98,7 @@ export function DataTable({
 
   return (
     <>
+      {searchable && (
       <div className="table-toolbar">
         <label>
           Search records
@@ -98,10 +113,16 @@ export function DataTable({
           {filtered.length} {filtered.length === 1 ? "record" : "records"}
         </span>
       </div>
+      )}
       <div className="table-scroll">
         <table>
           <thead>
             <tr>
+              {serial && (
+                <th scope="col" className="serial-cell">
+                  Sr. No.
+                </th>
+              )}
               {selection && (
                 <th scope="col" className="select-cell">
                   <SelectAll
@@ -117,12 +138,13 @@ export function DataTable({
                   />
                 </th>
               )}
+              {actions && actionsFirst && <th scope="col">Actions</th>}
               {columns.map(([key, label]) => (
                 <th key={key} scope="col">
                   {label}
                 </th>
               ))}
-              {actions && <th scope="col">Actions</th>}
+              {actions && !actionsFirst && <th scope="col">Actions</th>}
             </tr>
           </thead>
           <tbody>
@@ -144,6 +166,9 @@ export function DataTable({
                       : undefined
                   }
                 >
+                  {serial && (
+                    <td className="serial-cell">{serialStart + i}</td>
+                  )}
                   {selection && (
                     <td className="select-cell">
                       <input
@@ -162,6 +187,11 @@ export function DataTable({
                       />
                     </td>
                   )}
+                  {actions && actionsFirst && (
+                    <td>
+                      <div className="row-actions">{actions(row)}</div>
+                    </td>
+                  )}
                   {columns.map(([key]) => (
                     <td key={key}>
                       {key === "status" ? (
@@ -178,7 +208,9 @@ export function DataTable({
                                   : key
                                       .replace(/_text$/, "_img")
                                       .replace(/Text$/, "Img");
-                            const src = String(row[imageKey] || "");
+                            // Only question and option text have an image beside them.
+                            const src =
+                              imageKey === key ? "" : String(row[imageKey] || "");
                             return /^(https?:\/\/|data:image\/(png|jpeg|webp|gif);base64,)/i.test(
                               src,
                             ) ? (
@@ -196,7 +228,7 @@ export function DataTable({
                       )}
                     </td>
                   ))}
-                  {actions && (
+                  {actions && !actionsFirst && (
                     <td>
                       <div className="row-actions">{actions(row)}</div>
                     </td>
@@ -206,7 +238,7 @@ export function DataTable({
             ) : (
               <tr>
                 <td
-                  colSpan={columns.length + (actions ? 1 : 0) + (selection ? 1 : 0)}
+                  colSpan={columns.length + extraColumns}
                   className="empty"
                 >
                   {search ? (

@@ -10,6 +10,8 @@ export interface ModalProps {
   children: ReactNode;
   footer?: ReactNode;
   className?: string;
+  /** Maximum card width in pixels. */
+  width?: number;
 }
 
 export function Modal({
@@ -20,6 +22,7 @@ export function Modal({
   children,
   footer,
   className = "",
+  width = 520,
 }: ModalProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
 
@@ -67,7 +70,9 @@ export function Modal({
         className={`paper modal-card ${className}`.trim()}
         style={{
           width: "100%",
-          maxWidth: 520,
+          maxWidth: width,
+          maxHeight: "calc(100vh - 32px)",
+          overflowY: "auto",
           boxShadow: "0 10px 30px rgba(0,0,0,0.2)",
           padding: 24,
           margin: 0,

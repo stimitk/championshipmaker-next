@@ -71,6 +71,7 @@ let championships: Row[] = [
         description: "Explore the basics of science.",
         no_of_question: 10,
         time_minutes: "00:10:00",
+        label_ids: [1],
       },
     ],
   },
@@ -119,6 +120,14 @@ const masters: Record<string, Row[]> = {
   ],
   "configs/coins": [{ coin_id: 1, coin_value: 10 }],
 };
+// Students who reported a question as wrong, and bonus coins paid for confirmed reports.
+const wrongReports: (Row & { question_id: number; user_id: number; status: string })[] = [
+  { report_id: 1, question_id: 1, user_id: 11, user_name: "Alex", email: "alex@example.com", champ_id: 1, reported_at: "2026-10-12T10:24:00.000Z", status: "pending" },
+  { report_id: 2, question_id: 1, user_id: 12, user_name: "Sam", email: "sam@example.com", champ_id: 1, reported_at: "2026-10-12T11:02:00.000Z", status: "pending" },
+  { report_id: 3, question_id: 1, user_id: 13, user_name: "Priya", email: "priya@example.com", champ_id: 1, reported_at: "2026-10-13T08:45:00.000Z", status: "pending" },
+];
+const wrongRewards: Row[] = [];
+const wrongRewardRequests = new Map<string, unknown>();
 const participants: Row[] = [
   {
     user_name: "Alex",
@@ -274,15 +283,88 @@ export function demoRequest(
       throw new Error("excludedQuestionIds must be a list of question IDs.");
     row.excluded_question_ids = input.excludedQuestionIds;
     data = { updated: true };
-  } else if (route === "/questions/analytics/frequent-errors")
+  } else if (route === "/questions/analytics/frequent-errors") {
+    const champ = url.searchParams.get("championshipId");
     data = [
       {
         question_id: 1,
         question_text: questions[0]?.question_text,
+        champ_id: 1,
+        champ_name: championships[0]?.champ_name,
         error_count: 2,
+        report_count: wrongReports.filter((r) => r.question_id === 1).length,
       },
-    ];
-  else if (route === "/questions" && method === "GET") {
+    ].filter((row) => !champ || String(row.champ_id) === champ);
+  } else if (/^\/questions\/[^/]+\/reports$/.test(route) && method === "GET") {
+    const questionId = Number(route.split("/")[2]);
+    const champ = url.searchParams.get("championshipId");
+    const reports = wrongReports
+      .filter(
+        (r) =>
+          r.question_id === questionId &&
+          (!champ || String(r.champ_id) === champ),
+      )
+      .map((r) => {
+        const reward = wrongRewards.find(
+          (w) => w.question_id === questionId && w.user_id === r.user_id,
+        );
+        return {
+          ...r,
+          reward_coins: reward?.coins ?? null,
+          rewarded_at: reward?.created_at ?? null,
+        };
+      });
+    data = { reports, total: reports.length };
+  } else if (
+    /^\/questions\/[^/]+\/reports\/verification$/.test(route) &&
+    method === "PUT"
+  ) {
+    const questionId = Number(route.split("/")[2]);
+    if (!["incorrect", "correct"].includes(String(input.verdict)))
+      throw new Error("verdict must be \"incorrect\" or \"correct\".");
+    let updated = 0;
+    for (const r of wrongReports)
+      if (
+        r.question_id === questionId &&
+        r.status === "pending" &&
+        (!input.championshipId || String(r.champ_id) === String(input.championshipId))
+      ) {
+        r.status = input.verdict === "incorrect" ? "verified" : "rejected";
+        updated++;
+      }
+    data = { updated };
+  } else if (/^\/questions\/[^/]+\/rewards$/.test(route) && method === "POST") {
+    // Mirrors the required server rules: verified reports only, one reward per
+    // student and question, and a repeated idempotency key returns the first result.
+    const questionId = Number(route.split("/")[2]);
+    const coins = Number(input.coins);
+    if (!Number.isInteger(coins) || coins < 1 || coins > 1000)
+      throw new Error("coins must be a whole number from 1 to 1000.");
+    const key = String(input.idempotencyKey || "");
+    if (!key) throw new Error("idempotencyKey is required.");
+    if (wrongRewardRequests.has(key)) data = wrongRewardRequests.get(key);
+    else {
+      const candidates = wrongReports.filter(
+        (r) =>
+          r.question_id === questionId &&
+          r.status === "verified" &&
+          (!input.championshipId || String(r.champ_id) === String(input.championshipId)),
+      );
+      const awarded: Row[] = [];
+      let skipped = 0;
+      const created_at = new Date().toISOString();
+      for (const r of candidates) {
+        if (wrongRewards.some((w) => w.question_id === questionId && w.user_id === r.user_id)) {
+          skipped++;
+          continue;
+        }
+        wrongRewards.push({ question_id: questionId, user_id: r.user_id, champ_id: r.champ_id, coins, created_at });
+        awarded.push({ user_id: r.user_id, coins });
+      }
+      data = { awarded, skipped, totalCoins: awarded.length * coins };
+      wrongRewardRequests.set(key, data);
+    }
+  } else if (route === "/questions" && method === "GET") {
     const search = (url.searchParams.get("search") || "").toLowerCase(),
       label = url.searchParams.get("labelId");
     const filtered = questions.filter(
@@ -318,6 +400,11 @@ export function demoRequest(
       row,
       Object.fromEntries(Object.entries(input).map(([k, v]) => [snake(k), v])),
     );
+    // The API column is expected_time_sec, not the snake_case of the body field.
+    if ("expectedTimeSeconds" in input) {
+      row.expected_time_sec = input.expectedTimeSeconds;
+      delete row.expected_time_seconds;
+    }
     // labelId: null removes the question from its set but keeps it in the bank.
     if ("labelId" in input)
       row.label_name =
@@ -351,12 +438,17 @@ export function demoRequest(
       end_time: input.endTime,
       status: 1,
       total_participants: 0,
+      play_win_description: input.playWinDescription,
+      product_name: input.productName,
+      product_description: input.productDescription,
+      product_image: input.productImage,
       modes: modes.map((m) => ({
         mode_id: id,
         mode_name: m.modeName,
         description: m.description,
         no_of_question: m.noOfQuestions,
         time_minutes: m.timeMinutes,
+        label_ids: m.labelIds || [],
       })),
     });
     data = { champId: id };
@@ -382,6 +474,10 @@ export function demoRequest(
       endDate: "end_date",
       startTime: "start_time",
       endTime: "end_time",
+      playWinDescription: "play_win_description",
+      productName: "product_name",
+      productDescription: "product_description",
+      productImage: "product_image",
     };
     for (const [k, v] of Object.entries(input)) if (keys[k]) row[keys[k]] = v;
     data = { updated: true };

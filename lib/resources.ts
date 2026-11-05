@@ -98,7 +98,7 @@ export const resources: Record<string, Resource> = {
       required("companyAddress", "Address", "textarea"),
       required("companyPhoneNumber", "Company phone"),
       { name: "companyWebsite", label: "Website", type: "url" },
-      required("companyDescription", "Description", "textarea"),
+      required("companyDescription", "Description", "richtext"),
       required("contactPersonName", "Contact person"),
       required("contactPersonEmail", "Contact email", "email"),
       required("contactPersonPhone", "Contact phone"),
@@ -119,7 +119,7 @@ export const resources: Record<string, Resource> = {
     fields: [
       { ...required("companyId", "Company", "select"), source: "companies" },
       required("title", "Title"),
-      required("adDescription", "Description", "textarea"),
+      required("adDescription", "Description", "richtext"),
       {
         ...required("adImage", "Image URL", "url"),
         hint: "Use the URL of an image already hosted on your media service.",
@@ -192,6 +192,58 @@ export const questionFields: Field[] = [
   },
   { ...required("totalCoins", "Coins", "number"), min: 1, value: "10" },
 ];
+export const PLAY_AND_WIN = "Play and win";
+export function isPlayAndWin(mode: unknown) {
+  return String(mode ?? "").trim().toLowerCase() === PLAY_AND_WIN.toLowerCase();
+}
+const playAndWin = { field: "modeName", value: PLAY_AND_WIN };
+/** Offer details shown on the championship form only for the Play and win mode. */
+export const playAndWinFields: Field[] = [
+  {
+    name: "playWinDescription",
+    label: "Play and win description",
+    type: "richtext",
+    hint: "Describe the activity or offer players are competing for.",
+    showWhen: playAndWin,
+  },
+  {
+    ...required("productName", "Product name"),
+    maxLength: 100,
+    showWhen: playAndWin,
+  },
+  {
+    name: "productDescription",
+    label: "Product description",
+    type: "richtext",
+    hint: "Features or benefits of the product.",
+    showWhen: playAndWin,
+  },
+  {
+    name: "productImage",
+    label: "Product image",
+    type: "image",
+    showWhen: playAndWin,
+  },
+];
+/** Request body keys for the Play and win details, or nothing for other modes. */
+export function playAndWinPayload(values: Record<string, unknown>) {
+  if (!isPlayAndWin(values.modeName)) return {};
+  return {
+    playWinDescription: values.playWinDescription || "",
+    productName: values.productName || "",
+    productDescription: values.productDescription || "",
+    productImage: values.productImage || "",
+  };
+}
+/** Form values for the Play and win details from a championship record. */
+export function playAndWinInitial(row: Record<string, unknown>) {
+  return {
+    playWinDescription: row.play_win_description ?? row.playWinDescription,
+    productName: row.product_name ?? row.productName,
+    productDescription: row.product_description ?? row.productDescription,
+    productImage: row.product_image ?? row.productImage,
+  };
+}
 export const championshipFields: Field[] = [
   {
     ...required("champName", "Championship name"),
@@ -210,7 +262,8 @@ export const championshipFields: Field[] = [
       { value: "Quick Hit", label: "Quick Hit" },
     ],
   },
-  { name: "description", label: "Game description", type: "textarea" },
+  { name: "description", label: "Game description", type: "richtext" },
+  ...playAndWinFields,
   {
     ...required("noOfQuestions", "Number of questions", "number"),
     min: 1,
@@ -245,7 +298,7 @@ export const unavailable: Record<
     message: "Gift management is not available yet.",
     fields: [
       required("giftType", "Gift type"),
-      required("description", "Description", "textarea"),
+      required("description", "Description", "richtext"),
       required("imageUrl", "Image URL", "url"),
     ],
   },

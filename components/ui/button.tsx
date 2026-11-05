@@ -97,3 +97,27 @@ export const Button = forwardRef<HTMLButtonElement | HTMLAnchorElement, ButtonPr
 );
 
 Button.displayName = "Button";
+
+export interface IconButtonProps extends Omit<ButtonProps, "children" | "size"> {
+  /** Accessible name, also shown as the hover tooltip. */
+  label: string;
+  icon: ReactNode;
+}
+
+export const IconButton = forwardRef<HTMLButtonElement | HTMLAnchorElement, IconButtonProps>(
+  ({ label, icon, variant = "secondary", className = "", ...props }, ref) => (
+    <Button
+      ref={ref}
+      size="sm"
+      variant={variant}
+      className={`icon-button ${className}`.trim()}
+      aria-label={label}
+      title={label}
+      {...props}
+    >
+      {icon}
+    </Button>
+  )
+);
+
+IconButton.displayName = "IconButton";

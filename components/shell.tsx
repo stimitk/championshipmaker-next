@@ -45,6 +45,13 @@ const paths: Record<string, string[]> = {
   settings: ["M4 7h16M4 17h16M8 4v6M16 14v6"],
   menu: ["M3 6h18M3 12h18M3 18h18"],
   logout: ["M9 4H4v16h5M14 8l4 4-4 4M8 12h10"],
+  eye: [
+    "M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12Z",
+    "M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0",
+  ],
+  edit: ["M4 20h4L19 9l-4-4L4 16v4Z", "M13.5 6.5l4 4"],
+  trash: ["M4 7h16M10 11v6M14 11v6", "M6 7l1 13h10l1-13M9 7V4h6v3"],
+  power: ["M12 3v9", "M6.3 6.3a8 8 0 1 0 11.4 0"],
 };
 export function Icon({ name }: { name: string }) {
   return (

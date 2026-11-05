@@ -100,6 +100,7 @@ export function isRichColumn(key: string) {
   return (
     key === "question_text" ||
     key === "questionText" ||
-    /^option[1-4](?:_text|Text)$/.test(key)
+    /^option[1-4](?:_text|Text)$/.test(key) ||
+    /(?:^|_)description$|Description$/.test(key)
   );
 }

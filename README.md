@@ -68,3 +68,19 @@ The set stores the questions that are switched off. Backend requirements:
 - `PUT /questions/labels/:id` with `{ "excludedQuestionIds": [12, 15] }` replaces the set's list (an empty list includes everything). Only the set's owner or a superadmin may change it.
 - `GET /questions/labels` returns `excluded_question_ids` (array) on each set.
 - `POST /quiz/session/start` must not draw excluded questions. Ignore IDs that no longer belong to the set.
+
+## Wrong question reports and bonus coins
+
+The Wrong Questions page lists questions with their incorrect-answer and report counts, filters by championship, and shows the selected championship's details. **View** opens the students who reported a question. An admin first verifies the question (incorrect, or correct), and only then can award bonus coins to the verified reporters. Demo mode implements all of this in memory.
+
+The backend must add the following. Until it does, the page shows the existing frequent-errors data and the reports view returns an error.
+
+- `GET /questions/analytics/frequent-errors?championshipId=` — accept the optional filter and add `champ_id`, `champ_name` and `report_count` to each row.
+- `GET /questions/:id/reports?championshipId=` returns `{ reports, total }`. Each report has `report_id`, `user_id`, `user_name`, `email`, `champ_id`, `reported_at`, `status` (`pending`, `verified` or `rejected`), `reward_coins` and `rewarded_at` (`null` until rewarded).
+- `PUT /questions/:id/reports/verification` with `{ "verdict": "incorrect" | "correct", "championshipId"? }` changes the question's pending reports to `verified` or `rejected`. Returns `{ updated }`.
+- `POST /questions/:id/rewards` with `{ "coins": 1–1000, "idempotencyKey": "<uuid>", "championshipId"? }` returns `{ awarded: [{ user_id, coins }], skipped, totalCoins }`. It must:
+  - pay only reports with status `verified` (never on submission alone);
+  - run in a single database transaction that inserts a reward record (amount, user, question, championship, date) and credits `user_points`, so the reward appears in `GET /me/points` history;
+  - enforce a unique constraint on (question, user) so a student is never paid twice for the same question, counting already-paid students in `skipped`;
+  - store the idempotency key and return the original result when the same key is sent again, because the portal reuses the key when an admin retries after a failed or timed-out request;
+  - allow only superadmins or the championship's owner.

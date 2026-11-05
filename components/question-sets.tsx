@@ -1,6 +1,8 @@
 "use client";
 import { useEffect, useState } from "react";
 import { api, errorText, rowsOf } from "../lib/api";
+import { championshipListPath, usesSet } from "../lib/championship-sets";
+import { portal } from "../lib/portal";
 import {
   excludedQuestionIds,
   saveExcludedQuestions,
@@ -17,7 +19,13 @@ import {
   Notice,
   Retry,
   useLoad,
+  IconButton,
+  Modal,
+  EmptyState,
 } from "./ui";
+import { Icon } from "./shell";
+import { QuestionEditForm } from "./questions";
+import { ChampionshipSummary } from "./championships";
 
 const BulkImport = dynamic(
   () => import("./bulk-import").then((m) => ({ default: m.BulkImport })),
@@ -55,12 +63,18 @@ export function QuestionSets({
   const [savingSelection, setSavingSelection] = useState(false);
   const [selectionError, setSelectionError] = useState("");
   const [selectionMessage, setSelectionMessage] = useState("");
+  const [editing, setEditing] = useState<Row | null>(null);
+  const [editMessage, setEditMessage] = useState("");
   const labels = useLoad<unknown>("/questions/labels", labelsRevision);
   const sets = rowsOf(labels.data);
   useEffect(() => {
     if (!selected && sets.length) setSelected(String(sets[0].label_id));
   }, [labels.data, selected]);
   const current = sets.find((row) => String(row.label_id) === selected);
+  const championships = useLoad<unknown>(championshipListPath(), labelsRevision);
+  const linkedChampionships = current
+    ? rowsOf(championships.data).filter((row) => usesSet(row, current))
+    : [];
   const visibleSets = sets.filter((row) =>
     matchesSearch(row.label_name, setSearch),
   );
@@ -76,6 +90,7 @@ export function QuestionSets({
     setDraftExcluded(null);
     setSelectionError("");
     setSelectionMessage("");
+    setEditMessage("");
     setSelected(id);
     setPage(1);
   }
@@ -139,7 +154,6 @@ export function QuestionSets({
       />
       <div className="question-sets-workspace">
         <section className="paper question-set-list" aria-label="Question sets">
-          <h2>Your question sets</h2>
           {labels.loading ? (
             <Loading />
           ) : labels.error ? (
@@ -149,20 +163,25 @@ export function QuestionSets({
             />
           ) : sets.length ? (
             <>
-              <label className="set-search">
-                Search question sets
-                <input
-                  type="search"
-                  value={setSearch}
-                  onChange={(event) => setSetSearch(event.target.value)}
-                  placeholder="Name or keyword"
-                />
-              </label>
-              <p className="muted set-search-count" role="status">
-                {setSearch
-                  ? `${visibleSets.length} of ${sets.length} sets`
-                  : `${sets.length} ${sets.length === 1 ? "set" : "sets"}`}
-              </p>
+              <div className="question-set-list-header">
+                <div className="question-set-list-title">
+                  <h2>Your question sets</h2>
+                  <span className="set-search-count" role="status">
+                    {setSearch
+                      ? `${visibleSets.length} of ${sets.length} sets`
+                      : `${sets.length} ${sets.length === 1 ? "set" : "sets"}`}
+                  </span>
+                </div>
+                <label className="set-search">
+                  <span className="sr-only">Search question sets</span>
+                  <input
+                    type="search"
+                    value={setSearch}
+                    onChange={(event) => setSetSearch(event.target.value)}
+                    placeholder="Search question sets"
+                  />
+                </label>
+              </div>
               {visibleSets.length ? (
                 <fieldset className="set-picker-group" disabled={importing}>
                   <legend className="sr-only">Choose a question set</legend>
@@ -188,7 +207,7 @@ export function QuestionSets({
                   })}
                 </fieldset>
               ) : (
-                <p className="muted">
+                <p className="muted set-search-empty">
                   No question sets match “{setSearch}”.{" "}
                   <button
                     type="button"
@@ -201,7 +220,10 @@ export function QuestionSets({
               )}
             </>
           ) : (
-            <p className="muted">Create a question set to get started.</p>
+            <>
+              <h2>Your question sets</h2>
+              <p className="muted">Create a question set to get started.</p>
+            </>
           )}
         </section>
         <section className="paper question-set-content">
@@ -212,6 +234,32 @@ export function QuestionSets({
           ) : (
             <>
               <h2>{String(current?.label_name || "Question set")}</h2>
+              <section
+                className="set-championships"
+                aria-label="Championship details for this set"
+              >
+                <h3>Championship Details</h3>
+                {portal.kind === "admin" && (
+                  <p className="muted">Only active championships are listed.</p>
+                )}
+                {championships.loading ? (
+                  <Loading />
+                ) : championships.error ? (
+                  <Retry
+                    error={championships.error}
+                    onRetry={() => setLabelsRevision((v) => v + 1)}
+                  />
+                ) : linkedChampionships.length ? (
+                  linkedChampionships.map((row) => (
+                    <LinkedChampionship key={String(row.champ_id)} row={row} />
+                  ))
+                ) : (
+                  <EmptyState
+                    title="No championships use this set yet"
+                    description="Select this set when creating a championship and its details will appear here."
+                  />
+                )}
+              </section>
               <div
                 className="set-view-switch"
                 role="group"
@@ -283,6 +331,9 @@ export function QuestionSets({
                     {selectionMessage && (
                       <Notice kind="success">{selectionMessage}</Notice>
                     )}
+                    {editMessage && (
+                      <Notice kind="success">{editMessage}</Notice>
+                    )}
                     <div className="live-selection">
                     <DataTable
                       rows={questions.data?.questions || []}
@@ -310,12 +361,24 @@ export function QuestionSets({
                         rowLabel: (row) =>
                           `question ${String(row.question_id)} for live quizzes`,
                       }}
+                      actionsFirst
+                      actions={(row) => (
+                        <IconButton
+                          label="Edit question"
+                          icon={<Icon name="edit" />}
+                          onClick={() => {
+                            setEditMessage("");
+                            setEditing(row);
+                          }}
+                        />
+                      )}
                       columns={[
                         ["question_text", "Question"],
                         ["option1_text", "Option 1"],
                         ["option2_text", "Option 2"],
                         ["option3_text", "Option 3"],
                         ["option4_text", "Option 4"],
+                        ["expected_time_sec", "Expected time (sec)"],
                         ["total_coins", "Coins"],
                       ]}
                     />
@@ -391,6 +454,45 @@ export function QuestionSets({
           )}
         </section>
       </div>
+      <Modal
+        isOpen={editing !== null}
+        onClose={() => setEditing(null)}
+        title="Edit question"
+        width={880}
+      >
+        {editing && (
+          <QuestionEditForm
+            id={String(editing.question_id)}
+            question={editing}
+            secondaryAction={
+              <button
+                type="button"
+                className="secondary"
+                onClick={() => setEditing(null)}
+              >
+                Cancel
+              </button>
+            }
+            onSaved={() => {
+              setEditing(null);
+              setEditMessage("Question updated.");
+              refresh();
+            }}
+          />
+        )}
+      </Modal>
     </>
+  );
+}
+
+/** One linked championship, using its full record (with game settings) once loaded. */
+function LinkedChampionship({ row }: { row: Row }) {
+  const details = useLoad<Row>(
+    `/championships/${encodeURIComponent(String(row.champ_id))}`,
+  );
+  return (
+    <div className="set-championship">
+      <ChampionshipSummary data={{ ...row, ...details.data }} />
+    </div>
   );
 }

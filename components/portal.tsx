@@ -83,6 +83,14 @@ const QuestionSets = dynamic(
   }
 );
 
+const WrongQuestions = dynamic(
+  () =>
+    import("./wrong-questions").then((m) => ({ default: m.WrongQuestions })),
+  {
+    loading: () => <SkeletonPage cards={2} />,
+  }
+);
+
 const ResourcePage = dynamic(
   () => import("./resource-page").then((m) => ({ default: m.ResourcePage })),
   {
@@ -276,6 +284,7 @@ function Screen({ route }: { route: string }) {
     if (id && action === "edit") return <QuestionEditor key={id} id={id} />;
     if (!id) return <QuestionBank />;
   }
+  if (section === "frequent-errors" && !id) return <WrongQuestions />;
   if (resources[section] && (!id || id === "new"))
     return <ResourcePage key={route} name={section} create={id === "new"} />;
   return (

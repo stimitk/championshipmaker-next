@@ -11,7 +11,7 @@ const content = {
 const insights = {
   title: "Insights",
   items: [
-    ["/analytics", "Championship Analytics", "chart"],
+    ["/analytics", "User Analytics", "chart"],
     ["/frequent-errors", "Wrong Questions", "alert"],
   ],
 };

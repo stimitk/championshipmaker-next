@@ -1,8 +1,9 @@
 "use client";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api, errorText, rowsOf } from "../lib/api";
+import { championshipListPath, linkedSets } from "../lib/championship-sets";
 import { questionFields } from "../lib/resources";
 import {
   excludedQuestionIds,
@@ -20,12 +21,16 @@ import {
   Card,
   Button,
   ConfirmModal,
+  IconButton,
 } from "./ui";
+import { Icon } from "./shell";
 
 export function QuestionBank() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [label, setLabel] = useState("");
+  const [championship, setChampionship] = useState("");
+  const [filterKey, setFilterKey] = useState(0);
   const [revision, setRevision] = useState(0);
   const [selected, setSelected] = useState<string[]>([]);
   const [confirming, setConfirming] = useState(false);
@@ -33,21 +38,103 @@ export function QuestionBank() {
   const [removeError, setRemoveError] = useState("");
   const [removeMessage, setRemoveMessage] = useState("");
   // Selection belongs to the rows on screen; a new page or filter starts fresh.
-  useEffect(() => setSelected([]), [page, search, label]);
+  useEffect(() => setSelected([]), [page, search, label, championship]);
+  const labels = useLoad<unknown>("/questions/labels", revision);
+  const championships = useLoad<unknown>(championshipListPath(), revision);
+  const setNames = new Map(
+    rowsOf(labels.data).map((row) => [String(row.label_id), row.label_name]),
+  );
+  // A championship's questions are those in its linked sets. null means no set restriction.
+  const championshipRow = rowsOf(championships.data).find(
+    (row) => String(row.champ_id) === championship,
+  );
+  const championshipSets = championshipRow
+    ? (() => {
+        const { ids, names } = linkedSets(championshipRow);
+        const byName = rowsOf(labels.data)
+          .filter((row) => names.includes(String(row.label_name)))
+          .map((row) => String(row.label_id));
+        return [...new Set([...ids, ...byName])];
+      })()
+    : [];
+  const scopeReady =
+    !championship || (!championships.loading && !labels.loading);
+  const scope: string[] | null = !championship
+    ? label
+      ? [label]
+      : null
+    : label
+      ? championshipSets.includes(label)
+        ? [label]
+        : []
+      : championshipSets;
+  // One set or none: the API filters and paginates. Several: fetched per set and merged below.
+  const single = scopeReady && (scope === null || scope.length === 1);
   const query = new URLSearchParams({
     page: String(page),
     limit: "20",
     ...(search ? { search } : {}),
-    ...(label ? { labelId: label } : {}),
+    ...(scope?.length === 1 ? { labelId: scope[0] } : {}),
   });
-  const { data, loading, error } = useLoad<{ questions: Row[]; total: number }>(
-    `/questions/?${query}`,
+  const singleLoad = useLoad<{ questions: Row[]; total: number }>(
+    single ? `/questions/?${query}` : null,
     revision,
   );
-  const labels = useLoad<unknown>("/questions/labels", revision);
-  const setNames = new Map(
-    rowsOf(labels.data).map((row) => [String(row.label_id), row.label_name]),
-  );
+  const scopeKey = scopeReady && scope && scope.length > 1 ? scope.join(",") : "";
+  const [merged, setMerged] = useState<{
+    key: string;
+    rows: Row[];
+    error: string;
+  } | null>(null);
+  useEffect(() => {
+    if (!scopeKey) return;
+    const controller = new AbortController();
+    const key = `${scopeKey}|${search}|${revision}`;
+    setMerged(null);
+    Promise.all(
+      scopeKey.split(",").map(async (labelId) => {
+        const all: Row[] = [];
+        for (let next = 1; ; next++) {
+          const result = await api<{ questions: Row[]; total: number }>(
+            `/questions/?${new URLSearchParams({ labelId, page: String(next), limit: "100", ...(search ? { search } : {}) })}`,
+            { signal: controller.signal },
+          );
+          all.push(...result.questions);
+          if (!result.questions.length || all.length >= Number(result.total))
+            return all;
+        }
+      }),
+    )
+      .then((lists) => {
+        const rows = [
+          ...new Map(
+            lists.flat().map((row) => [String(row.question_id), row]),
+          ).values(),
+        ].sort((a, b) => Number(a.question_id) - Number(b.question_id));
+        setMerged({ key, rows, error: "" });
+      })
+      .catch((e) => {
+        if (!controller.signal.aborted)
+          setMerged({ key, rows: [], error: errorText(e) });
+      });
+    return () => controller.abort();
+  }, [scopeKey, search, revision]);
+  const mergedReady =
+    merged?.key === `${scopeKey}|${search}|${revision}` ? merged : null;
+  const data = !scopeReady
+    ? null
+    : single
+      ? singleLoad.data
+      : scopeKey
+        ? mergedReady && {
+            questions: mergedReady.rows.slice((page - 1) * 20, page * 20),
+            total: mergedReady.rows.length,
+          }
+        : { questions: [], total: 0 };
+  const loading = !scopeReady || (single ? singleLoad.loading : !!scopeKey && !mergedReady);
+  const error =
+    (championship && championships.error) ||
+    (single ? singleLoad.error : mergedReady?.error || "");
   const labelName = String(setNames.get(label) || "this question set");
   const rows: Row[] = (data?.questions || []).map((row) => ({
     ...row,
@@ -107,12 +194,23 @@ export function QuestionBank() {
   function filter(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    setSearch(String(form.get("search") || ""));
+    setSearch(String(form.get("search") || "").trim());
     setLabel(String(form.get("label") || ""));
+    setChampionship(String(form.get("championship") || ""));
     setPage(1);
     setRemoveMessage("");
     setRemoveError("");
   }
+  function resetFilters() {
+    setSearch("");
+    setLabel("");
+    setChampionship("");
+    setPage(1);
+    setRemoveMessage("");
+    setRemoveError("");
+    setFilterKey((v) => v + 1);
+  }
+  const filtered = !!(search || label || championship);
 
   return (
     <>
@@ -125,10 +223,32 @@ export function QuestionBank() {
         }
       />
       <Card>
-        <form className="filter-bar" onSubmit={filter}>
+        <form className="filter-bar" onSubmit={filter} key={filterKey}>
           <label>
             Question text
-            <input type="search" name="search" placeholder="Search questions" />
+            <input
+              type="search"
+              name="search"
+              defaultValue={search}
+              placeholder="Search questions"
+            />
+          </label>
+          <label>
+            Championship ID
+            <select
+              name="championship"
+              defaultValue={championship}
+              key={championships.loading ? "loading" : "ready"}
+            >
+              <option value="">
+                {championships.loading ? "Loading championships…" : "All championships"}
+              </option>
+              {rowsOf(championships.data).map((row) => (
+                <option key={String(row.champ_id)} value={String(row.champ_id)}>
+                  #{String(row.champ_id)} · {String(row.champ_name)}
+                </option>
+              ))}
+            </select>
           </label>
           <label>
             Question set
@@ -146,8 +266,30 @@ export function QuestionBank() {
             </select>
           </label>
           <Button type="submit">Filter</Button>
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={!filtered}
+            onClick={resetFilters}
+          >
+            Reset filters
+          </Button>
         </form>
         {labels.error && <Notice kind="error">{labels.error}</Notice>}
+        {championships.error && !championship && (
+          <Notice kind="error">
+            Championships could not be loaded: {championships.error}
+          </Notice>
+        )}
+        {championship && scopeReady && !error && scope?.length === 0 && (
+          <Notice kind="info">
+            {championshipRow
+              ? label
+                ? "The selected question set is not used by this championship."
+                : "This championship has no linked question sets."
+              : "This championship is no longer in your list."}
+          </Notice>
+        )}
         {removeMessage && <Notice kind="success">{removeMessage}</Notice>}
         {removeError && <Notice kind="error">{removeError}</Notice>}
         {label ? (
@@ -184,6 +326,12 @@ export function QuestionBank() {
             <DataTable
               rows={rows}
               loading={loading}
+              searchable={false}
+              serial
+              serialStart={(page - 1) * 20 + 1}
+              emptyMessage={
+                filtered ? "No questions match these filters" : undefined
+              }
               selection={
                 label
                   ? {
@@ -205,18 +353,18 @@ export function QuestionBank() {
                 ["correct_answer", "Correct"],
                 ["total_coins", "Coins"],
               ]}
+              actionsFirst
               actions={(row) => (
                 <>
-                  <Button
-                    size="sm"
-                    variant="secondary"
+                  <IconButton
+                    label="Edit question"
+                    icon={<Icon name="edit" />}
                     href={`/questions/${encodeURIComponent(String(row.question_id))}/edit`}
-                  >
-                    Edit
-                  </Button>
-                  <Button
-                    size="sm"
+                  />
+                  <IconButton
+                    label="Delete question"
                     variant="danger"
+                    icon={<Icon name="trash" />}
                     onClick={async () => {
                       if (!confirm("Are you sure you want to delete this question?"))
                         return;
@@ -229,9 +377,7 @@ export function QuestionBank() {
                         alert(errorText(e));
                       }
                     }}
-                  >
-                    Delete
-                  </Button>
+                  />
                 </>
               )}
             />
@@ -337,29 +483,6 @@ export function QuestionEditor({ id }: { id?: string }) {
     }
   }
 
-  const initial: Record<string, unknown> = loaded
-    ? {
-        labelId: loaded.label_id,
-        questionText: loaded.question_text,
-        questionImage: loaded.question_image,
-        option1Text: loaded.option1_text,
-        option2Text: loaded.option2_text,
-        option3Text: loaded.option3_text,
-        option4Text: loaded.option4_text,
-        option1Img: loaded.option1_img,
-        option2Img: loaded.option2_img,
-        option3Img: loaded.option3_img,
-        option4Img: loaded.option4_img,
-        correctAnswer: loaded.correct_answer,
-        totalCoins: loaded.total_coins,
-        expectedTimeSeconds: loaded.expected_time_sec,
-      }
-    : {};
-
-  const fields = id
-    ? questionFields.filter((f) => f.name !== "expectedTimeSeconds")
-    : questionFields;
-
   return (
     <>
       <Heading title={id ? "Edit Question" : "New Question"} />
@@ -387,21 +510,71 @@ export function QuestionEditor({ id }: { id?: string }) {
       )}
       {(!id || loaded) && (
         <Card>
-          <Form
-            key={id || "new"}
-            fields={fields}
-            initial={initial}
-            submitLabel={id ? "Save question" : "Add question"}
-            onSubmit={async (values) => {
-              await api(
-                id ? `/questions/${encodeURIComponent(id)}` : "/questions/",
-                { method: id ? "PUT" : "POST", body: values },
-              );
-              router.push("/questions");
-            }}
-          />
+          {id && loaded ? (
+            <QuestionEditForm
+              id={id}
+              question={loaded}
+              onSaved={() => router.push("/questions")}
+            />
+          ) : (
+            <Form
+              key="new"
+              fields={questionFields}
+              submitLabel="Add question"
+              onSubmit={async (values) => {
+                await api("/questions/", { method: "POST", body: values });
+                router.push("/questions");
+              }}
+            />
+          )}
         </Card>
       )}
     </>
+  );
+}
+
+// Shared by the Edit Question page and the Question Sets edit dialog.
+export function QuestionEditForm({
+  id,
+  question,
+  onSaved,
+  secondaryAction,
+}: {
+  id: string;
+  question: Row;
+  onSaved: () => void;
+  secondaryAction?: ReactNode;
+}) {
+  const initial: Record<string, unknown> = {
+    labelId: question.label_id,
+    questionText: question.question_text,
+    questionImage: question.question_image,
+    option1Text: question.option1_text,
+    option2Text: question.option2_text,
+    option3Text: question.option3_text,
+    option4Text: question.option4_text,
+    option1Img: question.option1_img,
+    option2Img: question.option2_img,
+    option3Img: question.option3_img,
+    option4Img: question.option4_img,
+    correctAnswer: question.correct_answer,
+    totalCoins: question.total_coins,
+    expectedTimeSeconds: question.expected_time_sec,
+  };
+  return (
+    <Form
+      key={id}
+      fields={questionFields}
+      initial={initial}
+      submitLabel="Save question"
+      secondaryAction={secondaryAction}
+      onSubmit={async (values) => {
+        await api(`/questions/${encodeURIComponent(id)}`, {
+          method: "PUT",
+          body: values,
+        });
+        onSaved();
+      }}
+    />
   );
 }

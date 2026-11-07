@@ -3,12 +3,11 @@ import { isValidElement, useState } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
-import { api, errorText, rowsOf } from "../lib/api";
+import { api, asId, errorText, rowsOf } from "../lib/api";
 import { championshipListPath, linkedSets } from "../lib/championship-sets";
 import {
   championshipFields,
   isPlayAndWin,
-  playAndWinFields,
   playAndWinInitial,
   playAndWinPayload,
 } from "../lib/resources";
@@ -177,27 +176,13 @@ function ExistingChampionshipEditor({ id }: { id: string }) {
   const router = useRouter();
   const [revision, setRevision] = useState(0);
   const { data, loading, error } = useLoad<Row>(
-    id ? `/championships/${encodeURIComponent(id)}` : null,
+    `/championships/${encodeURIComponent(id)}`,
     revision,
   );
-  // The documented PUT updates championship metadata only; it does not update mode rows.
-  // Play and win details are championship-level, so they stay editable for that mode.
-  const modeName = data?.mode_name ?? rowsOf(data?.modes)[0]?.mode_name;
-  const fields = id
-    ? [
-        ...championshipFields.filter((f) =>
-          [
-            "champName",
-            "categoryId",
-            "startDate",
-            "startTime",
-            "endDate",
-            "endTime",
-          ].includes(f.name),
-        ),
-        ...(isPlayAndWin(modeName) ? playAndWinFields : []),
-      ]
-    : championshipFields;
+  // Championships have one mode; its settings are sent back as a single `modes` entry.
+  const mode = rowsOf(data?.modes)[0];
+  const modeName = data?.mode_name ?? mode?.mode_name;
+  const fields = championshipFields.filter((f) => f.name !== "labelIds");
   const initial = data
     ? {
         champName: data.champ_name,
@@ -206,15 +191,17 @@ function ExistingChampionshipEditor({ id }: { id: string }) {
         endDate: dateValue(data.end_date),
         startTime: data.start_time,
         endTime: data.end_time,
-        // Not an editable field here; it only drives the Play and win fields' visibility.
         modeName,
+        description: mode?.description ?? "",
+        noOfQuestions: mode?.no_of_question ?? "",
+        durationMinutes: minutesOf(mode?.time_minutes) ?? "",
         ...playAndWinInitial(data),
       }
     : {};
   return (
     <>
       <Heading
-        title={id ? "Edit Championship" : "Create New Championship"}
+        title="Edit Championship"
         description="Configure your championship and its game settings together."
       />
       {loading ? (
@@ -222,19 +209,16 @@ function ExistingChampionshipEditor({ id }: { id: string }) {
       ) : error ? (
         <Retry error={error} onRetry={() => setRevision((v) => v + 1)} />
       ) : (
-        <section className="paper">
-          {id && (
-            <Notice kind="info">
-              You can update the championship name, category, and schedule
-              {isPlayAndWin(modeName) ? ", plus the Play and win offer details" : ""}.
-              Editing existing game settings is not available yet.
-            </Notice>
-          )}
+        <section className="paper wizard-panel">
+          <h2>Championship details</h2>
+          <p className="muted">
+            Update the championship details and game settings. Question sets
+            stay linked as they are.
+          </p>
           <Form
-            key={id || "new"}
             fields={fields}
             initial={initial}
-            submitLabel={id ? "Save championship" : "Create championship"}
+            submitLabel="Save championship"
             onSubmit={async (values) => {
               const start = `${values.startDate}T${values.startTime}`;
               const end = `${values.endDate}T${values.endTime}`;
@@ -242,6 +226,7 @@ function ExistingChampionshipEditor({ id }: { id: string }) {
                 throw new Error(
                   "The end date and time must be after the start.",
                 );
+              const minutes = Number(values.durationMinutes);
               const payload: Row = {
                 champName: values.champName,
                 categoryId: values.categoryId,
@@ -249,26 +234,22 @@ function ExistingChampionshipEditor({ id }: { id: string }) {
                 endDate: values.endDate,
                 startTime: values.startTime,
                 endTime: values.endTime,
-                ...playAndWinPayload({ ...values, modeName: values.modeName ?? modeName }),
-              };
-              if (!id) {
-                const minutes = Number(values.durationMinutes);
-                payload.modes = [
+                ...playAndWinPayload(values),
+                modes: [
                   {
+                    modeId: mode?.mode_id,
                     modeName: values.modeName,
                     description: values.description || "",
                     noOfQuestions: values.noOfQuestions,
                     timeMinutes: `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}:00`,
-                    labelIds: values.labelIds || [],
+                    labelIds: linkedSets(data ?? {}).ids.map(asId),
                   },
-                ];
-              }
-              await api(
-                id
-                  ? `/teacher/championships/${encodeURIComponent(id)}`
-                  : "/teacher/championships",
-                { method: id ? "PUT" : "POST", body: payload },
-              );
+                ],
+              };
+              await api(`/teacher/championships/${encodeURIComponent(id)}`, {
+                method: "PUT",
+                body: payload,
+              });
               router.push("/championships");
             }}
           />

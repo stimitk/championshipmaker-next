@@ -1074,7 +1074,22 @@ Prefix: `/api/v1/teacher`
 
 #### `PUT /championships/:id`
 - **Description:** Update championship details (ownership validated).
-- **Request Body:** Same top-level fields as `POST /championships` (including the Play and win fields when applicable). The portal does not send `modes` on update.
+- **Request Body:** Same fields as `POST /championships` (including the Play and win fields when applicable).
+- **🚧 Game settings:** The portal sends exactly **one** `modes` entry with the edited game settings. `modeId` is the existing mode's `mode_id` (omitted if the championship had none), and `labelIds` repeats the currently linked question sets unchanged. The backend should update that mode row in place (or replace the championship's modes with this one) rather than ignoring `modes`.
+```json
+{
+  "modes": [
+    {
+      "modeId": 3,
+      "modeName": "Quick Hit",
+      "description": "<p>Basic algorithms and data structures</p>",
+      "noOfQuestions": 20,
+      "timeMinutes": "00:15:00",
+      "labelIds": [3, 7]
+    }
+  ]
+}
+```
 
 #### `PATCH /championships/:id/status`
 - **Description:** Toggle championship status (1 = Active, 0 = Inactive).
@@ -1413,3 +1428,4 @@ These portal screens show an "unavailable" notice because no endpoint exists. No
 | 9 | Add `PUT /questions/:id/reports/verification` | [5.6](#put-idreportsverification) |
 | 10 | Add idempotent, transactional `POST /questions/:id/rewards` | [5.6](#post-idrewards) |
 | 11 | Sanitize rich-text HTML in `questionText`, mode `description` and Play and win descriptions | [5.6 `POST /`](#post-) |
+| 12 | Apply the `modes` entry on `PUT /teacher/championships/:id` so game settings can be edited | [5.7 `PUT /championships/:id`](#put-championshipsid) |

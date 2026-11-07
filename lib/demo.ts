@@ -480,6 +480,21 @@ export function demoRequest(
       productImage: "product_image",
     };
     for (const [k, v] of Object.entries(input)) if (keys[k]) row[keys[k]] = v;
+    const [m] = (input.modes as Row[] | undefined) ?? [];
+    if (m) {
+      const current = (row.modes as Row[] | undefined)?.[0] ?? {};
+      row.modes = [
+        {
+          ...current,
+          mode_id: m.modeId ?? current.mode_id ?? row.champ_id,
+          mode_name: m.modeName,
+          description: m.description,
+          no_of_question: m.noOfQuestions,
+          time_minutes: m.timeMinutes,
+          label_ids: m.labelIds ?? current.label_ids ?? [],
+        },
+      ];
+    }
     data = { updated: true };
   } else if (route.endsWith("/participants")) data = participants;
   else if (/^\/teacher\/analytics\//.test(route))
